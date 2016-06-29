@@ -253,9 +253,10 @@
 
 (defn wrangle-inital-data [this]
   (let [data (or (:initial-data (get-props this :card)) {})]
-    (if (readable-atom-like? data)
-      data
-      (atom data))))
+    (cond
+      (writable-atom-like? data) data
+      (readable-atom-like? data) (atom @data)
+      :else (atom data))))
 
 (def get-data-atom
   (if (html-env?)
@@ -311,12 +312,7 @@
                (let [initial-data (:initial-data card)
                      data         (if (readable-atom-like? initial-data) @initial-data initial-data)]
                  (if (not= @atom data)
-                   ;; Our data atom here may be read-only, so we need to check its resetable before
-                   ;; doing so. However, checking for (readble-atom-like?) would check that it's
-                   ;; swappable too, which we don't need here - it may very well be true that
-                   ;; some read-only atom implementations allow for resetting, so let's just check
-                   ;; for that here.
-                   (when (satisfies? IReset atom) (reset! atom data))))))))
+                   (reset! atom data)))))))
        :componentWillMount
        (if (html-env?)
          (fn []
