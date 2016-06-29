@@ -248,9 +248,12 @@
                           #js { :change_count change-count
                                 :children_thunk children-thunk}))
 
+(declare readable-atom-like?)
+(declare writable-atom-like?)
+
 (defn wrangle-inital-data [this]
   (let [data (or (:initial-data (get-props this :card)) {})]
-    (if (satisfies? IAtom data)
+    (if (readable-atom-like? data)
       data
       (atom data))))
 
@@ -258,8 +261,6 @@
   (if (html-env?)
     (fn [this] (get-state this :data_atom))
     (fn [this] (wrangle-inital-data this))))
-
-(declare atom-like?)
 
 (defn default-derive-main [parent-elem card data-atom change-count]
   (let [options  (:options card)
@@ -308,9 +309,14 @@
                  options (:options card)]
              (when (:static-state options)
                (let [initial-data (:initial-data card)
-                     data         (if (atom-like? initial-data) @initial-data initial-data)]
+                     data         (if (readable-atom-like? initial-data) @initial-data initial-data)]
                  (if (not= @atom data)
-                   (reset! atom data)))))))
+                   ;; Our data atom here may be read-only, so we need to check its resetable before
+                   ;; doing so. However, checking for (readble-atom-like?) would check that it's
+                   ;; swappable too, which we don't need here - it may very well be true that
+                   ;; some read-only atom implementations allow for resetting, so let's just check
+                   ;; for that here.
+                   (when (satisfies? IReset atom) (reset! atom data))))))))
        :componentWillMount
        (if (html-env?)
          (fn []
@@ -412,7 +418,8 @@
 
 (defn validate-card-options [opts]
   (if (map? opts)
-    (let [propagated-errors (get-in opts [:options :propagated-errors])]
+    (let [propagated-errors (get-in opts [:options :propagated-errors])
+          history? (get-in opts [:options :history])]
       (filter #(not (true? %))
               (let [{:keys [name
                             main-obj
@@ -434,10 +441,13 @@
                   (or (nil? initial-data)
                       (vector? initial-data)
                       (map? initial-data)
-                      (satisfies? IAtom initial-data)
-                      {:label :initial-data
-                       :message "should be an Atom or a Map or nil."
-                       :value initial-data})]
+                      (and history? (writable-atom-like? initial-data))
+                      (and (not history?) (readable-atom-like? initial-data))
+                      {:label   :initial-data
+                       :message (if history?
+                                  ":history is true, so should be an Atom or a Map or nil."
+                                  ":history is false, so should be a readable Atom, Map, or nil")
+                       :value   initial-data})]
                  (mapv #(booler? % (:options opts)) [:frame :heading :padding :inspect-data :watch-atom :history :static-state])))))
     [{:message "Card should be a Map."
       :value   opts}]))
@@ -520,15 +530,15 @@
   (-devcard-options [this devcard-opts]
     (edn-like-options obj devcard-opts)))
 
-(defn atom-like? [x] (and (satisfies? IWatchable x) (satisfies? IDeref x)))
-
+(defn readable-atom-like? [x] (and (satisfies? IWatchable x) (satisfies? IDeref x)))
+(defn writable-atom-like? [x] (and (readable-atom-like? x) (satisfies? IAtom x)))
 (defn edn-like? [x] (satisfies? IDeref x))
 
 (defn coerce-to-devcards-options [main-obj]
   (if (satisfies? IDevcardOptions main-obj)
     main-obj
     (cond
-      (atom-like? main-obj) (AtomLikeOptions. main-obj)
+      (readable-atom-like? main-obj) (AtomLikeOptions. main-obj)
       (edn-like?  main-obj) (EdnLikeOptions.  main-obj)
       :else (IdentiyOptions. main-obj))))
 
